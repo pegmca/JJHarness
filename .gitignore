@@ -152,3 +152,6 @@ gmcache/
 instances/**/gmcache/
 instances/**/data/logs/latest_backtest.log
 instances/**/data/logs/metrics.json
+
+.cursor/
+.gemini/
