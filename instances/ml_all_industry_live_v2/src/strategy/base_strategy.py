@@ -19,7 +19,26 @@ Harness Quant: 全行业机器学习选股策略 (ml_all_industry_live_v2) - 50�
 
 def init(context):
     df_constituents = stk_get_index_constituents('SHSE.000852')
-    context.candidate_pool = df_constituents['symbol'].tolist()[:500]
+    all_syms = df_constituents['symbol'].tolist()
+    main_board = [
+        s for s in all_syms
+        if s.startswith(('SHSE.600', 'SHSE.601', 'SHSE.603',
+                         'SZSE.000', 'SZSE.001', 'SZSE.002'))
+    ]
+    # 按流通市值升序取最小的500只，保持小盘股特性
+    today = datetime.datetime.now().strftime('%Y-%m-%d')
+    df_cap = stk_get_daily_mktvalue(
+        symbol=','.join(main_board),
+        start_date=today,
+        end_date=today,
+        fields='negotiable_market_value',
+        df=True
+    )
+    if df_cap is not None and not df_cap.empty:
+        df_cap = df_cap.sort_values('negotiable_market_value').drop_duplicates('symbol')
+        context.candidate_pool = df_cap['symbol'].head(500).tolist()
+    else:
+        context.candidate_pool = main_board[:500]
 
     context.forecast_len = 2
     context.training_len = 120
@@ -39,11 +58,9 @@ def init(context):
         subscribe(symbols=current_symbols, frequency='1d')
         context.subscribed_symbols = set(current_symbols)
 
-    # 09:15 盘前海选与重训（history 不占订阅额度）
-    schedule(schedule_func=prepare_and_subscribe, date_rule='1w', time_rule='09:15:00')
-    # 09:31 执行调仓
-    schedule(schedule_func=execute_rotation_with_buffer, date_rule='1w', time_rule='09:31:00')
-    # 每日止损监控
+    # 实盘模式只支持 '1d'，周一判断逻辑移入函数内部
+    schedule(schedule_func=prepare_and_subscribe, date_rule='1d', time_rule='09:15:00')
+    schedule(schedule_func=execute_rotation_with_buffer, date_rule='1d', time_rule='09:31:00')
     schedule(schedule_func=monitor_stop_loss, date_rule='1d', time_rule='09:35:00')
 
     print(f"[{context.now}] 初始化完成，已订阅持仓 {len(context.subscribed_symbols)} 只。")
@@ -54,6 +71,8 @@ def prepare_and_subscribe(context):
     盘前海选：用 history（不占订阅额度）跑完整模型，精准更新订阅列表。
     任何中途失败都保持原订阅不变，不影响止损监控。
     """
+    if context.now.isoweekday() != 1:
+        return
     now_str = context.now.strftime('%Y-%m-%d')
     fetch_len = context.training_len + 60
     date_list = get_previous_n_trading_dates(exchange='SHSE', date=now_str, n=fetch_len)
@@ -159,6 +178,8 @@ def execute_rotation_with_buffer(context):
     """
     09:31 执行调仓，使用 09:15 预测好的 active_picks，带换手控制缓冲。
     """
+    if context.now.isoweekday() != 1:
+        return
     if not context.active_picks:
         print(f"[!] {context.now}: active_picks 为空（波动率过高或海选失败），跳过调仓")
         return
