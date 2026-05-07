@@ -32,28 +32,29 @@ def init(context):
     context.stop_loss = -0.08   # 硬止损
     context.vol_threshold = 0.50
     
-    subscribe(symbols=context.target_symbols, frequency='1d')
-    schedule(schedule_func=algo, date_rule='1w', time_rule='09:31:00')
+    subscribe(symbols=context.target_symbols, frequency='60s')
+    schedule(schedule_func=algo, date_rule='1d', time_rule='09:31:00')
+
+def on_bar(context, bars):
+    # 分钟级实时止损监控
+    current_positions = {pos['symbol']: pos for pos in get_position()}
+    if not current_positions:
+        return
+
+    for bar in bars:
+        if bar.symbol in current_positions:
+            pos = current_positions[bar.symbol]
+            # 计算当前收益率 (基于最新分钟收盘价和成本价)
+            ret = bar.close / pos['vwap'] - 1
+            if ret <= context.stop_loss:
+                order_target_percent(symbol=bar.symbol, percent=0, order_type=OrderType_Market, position_side=PositionSide_Long)
+                print(f"{context.now}: 标的 {bar.symbol} 触发分钟级实时止损 ({ret:.2%})")
 
 def algo(context):
-    # 每天执行止损监控
-    monitor_stop_loss(context)
-    
     # 每周一执行换手控制调仓
     now = context.now
     if now.isoweekday() == 1:
         execute_rotation_with_buffer(context)
-
-def monitor_stop_loss(context):
-    positions = get_position()
-    for pos in positions:
-        symbol = pos['symbol']
-        last_bar = history_n(symbol=symbol, frequency='1d', count=1, end_time=context.now, fields='close', df=False)
-        if not last_bar: continue
-        ret = last_bar[0]['close'] / pos['vwap'] - 1
-        if ret <= context.stop_loss:
-            order_target_percent(symbol=symbol, percent=0, order_type=OrderType_Market, position_side=PositionSide_Long)
-            print(f"{context.now}: 标的 {symbol} 触发硬止损 ({ret:.2%})")
 
 def execute_rotation_with_buffer(context):
     now_str = context.now.strftime('%Y-%m-%d')
